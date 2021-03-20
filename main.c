@@ -1,15 +1,28 @@
 #include <stdio.h>
 #include <stdint.h>
 
-int numOfSboxes = 4;
-int numberOfStages = 4;
+#define NUM_OF_SBOXES 4
+#define NUM_OF_STAGES 4
 
-int sbox[] = {0xE, 0x4, 0xD, 0x1, 0x2, 0xF, 0xB, 0x8, 0x3, 0xA, 0x6, 0xC, 0x5, 0x9, 0x0, 0x7};
+//using arrays as a key:value pair to convert 4 bit values. (example 0x4 will convert to 0x2)
+const int sbox[] = {0xE, 0x4, 0xD, 0x1, 0x2, 0xF, 0xB, 0x8, 0x3, 0xA, 0x6, 0xC, 0x5, 0x9, 0x0, 0x7};
 
-//not zero based
-int permutation[] = {1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15, 4, 8, 12, 16};
+//not zero based, we will minus one from all of these in code. 
+//I did it this way just so there isn't a human error with off by one issues from copying the values from the PDF
+const int permutation[] = {1-1, 5-1, 9-1, 13-1, 2-1, 6-1, 10-1, 14-1, 3-1, 7-1, 11-1, 15-1, 4-1, 8-1, 12-1, 16-1};
+
+//randomly selected xor values on 16 bit values.
+const uint16_t keyXor[NUM_OF_STAGES + 1] = {0x4354, 0x23F3, 0x5FEA, 0x9812, 0x2328};
 
 int DiffDistTable[16][16];
+
+uint32_t TotalProbabilityNumerator = 1;
+uint32_t TotalProbabilityDenominator = 1;
+
+// typedef struct deltaMostLikely{
+//   int value;
+//   int Chance;
+// } Point;
 
 // This generates the Diffenece Distribution table. Print the values 6 or greater
 void findDiffs()
@@ -78,39 +91,56 @@ uint8_t getMostCommonDeltaY(uint8_t deltaX){
         }
     }
 
+    TotalProbabilityNumerator *= MostCommon;
+    TotalProbabilityDenominator *= 16; 
+
     return deltaYOut;
 }
 
 
 //Generates the initial input.
 //TODO: FIND OUT WHY we shift by 8 bits instead of another value (4 or 12)
-uint32_t generateInputPlainText(uint8_t inputByte){
-    uint32_t plaintext = inputByte << 8; //shift 2 bytes  over
+uint16_t generateInputPlainText(uint8_t inputByte){
+    uint16_t plaintext = inputByte << 8; //shift 2 bytes  over
     printf("plaintext is: %04X\n", plaintext);
     return plaintext;
 }
 
-uint32_t doSbox(uint32_t valueToDoSboxOn){
+uint16_t doSboxForAttack(uint16_t valueToDoSboxOn){
 
-    uint32_t sboxOutTotal = 0x0;
+    uint16_t sboxOutTotal = 0x0;
 
-    for(int i = 0; i < numOfSboxes; i++){
-        uint32_t sboxInput = ((valueToDoSboxOn>>(4*i)&0xF)); //This grabs 4 bits at a time
+    //loop through all non-zero values to see which is the most common DeltaY per input.
+    for(int i = 0; i < NUM_OF_SBOXES; i++){
+        uint16_t sboxInput = ((valueToDoSboxOn>>(4*i)&0xF)); //This grabs 4 bits at a time
         if(sboxInput == 0){
             //don't deal with zeros
             continue;
         }
 
-        uint32_t sboxOutput = getMostCommonDeltaY(sboxInput);
+        uint16_t sboxOutput = getMostCommonDeltaY(sboxInput);
         sboxOutTotal += (sboxOutput<<(4*i));
     }
     return sboxOutTotal;   
 }
 
+uint16_t doSboxForEncryption(uint16_t valueToDoSboxOn){
+    uint16_t sboxOutTotal = 0x0;
 
-uint32_t doPermutation(uint32_t valueToPermutate){
+    for(int i = 0; i < NUM_OF_SBOXES; i++){
+        //grab 4 bits at a time
+        uint16_t sboxInput = ((valueToDoSboxOn>>(4*i)&0xF)); //This grabs 4 bits at a time
+        //use sboxInput as the key for the key:value pair
+        uint16_t sboxOutput = sbox[sboxInput];
+        //recombine the 16 bits
+        sboxOutTotal += (sboxOutput<<(4*i));
+    }
+    return sboxOutTotal;   
+}
 
-    uint32_t permutateOut = 0;
+uint16_t doPermutation(uint16_t valueToPermutate){
+
+    uint16_t permutateOut = 0;
     //TODO: make this dynamic later
     for(int i = 0; i < 16 ; i++){
         uint16_t invertedIndex = 15 - i;
@@ -124,16 +154,16 @@ uint32_t doPermutation(uint32_t valueToPermutate){
 
 
 //Doing page 24 of the tutorial
-uint32_t runThrough(){
+uint16_t runAttack(){
     uint8_t deltax, deltay;
     //same as deltaU1
     getMostCommonDeltasTotal(&deltax, &deltay); //TODO: check if we need to grab this delta y
-    uint32_t modifiedValue = generateInputPlainText(deltax);
+    uint16_t modifiedValue = generateInputPlainText(deltax);
 
     //Dont run over the last stage yet for some reason. //TODO: figure out why
-    for (int i = 0; i < numberOfStages-1; i++){
+    for (int i = 0; i < NUM_OF_STAGES-1; i++){
         //do sbox
-        modifiedValue = doSbox(modifiedValue);
+        modifiedValue = doSboxForAttack(modifiedValue);
         printf("end of sbox iteration %d is %04X\n", i, modifiedValue);
         //do permutation
         modifiedValue = doPermutation(modifiedValue);
@@ -147,18 +177,38 @@ uint32_t runThrough(){
 }
 
 
-//reduce all of the permutation values by 1, Makes it easier to work with later.
-void initPermutationArray(){
-    for(int i = 0; i < sizeof(permutation); i++){
-        permutation[i]--;
-    }
-}
 
+uint16_t runEncryption(uint16_t message){
+    uint16_t intermediate_val = message;
+    printf("start:    %X\n", intermediate_val);
+    for(int i = 0; i <= NUM_OF_STAGES; i++){
+        //xor
+        intermediate_val = intermediate_val^keyXor[i];
+        printf("xor:      %X\n", intermediate_val);
+        //sbox
+        intermediate_val = doSboxForEncryption(intermediate_val);
+        printf("sbox:     %X\n", intermediate_val);
+        //permutation - don't permutate on round 4 
+        if(i != (NUM_OF_STAGES-1)){
+            intermediate_val = doPermutation(intermediate_val);
+            printf("perm:     %X\n", intermediate_val);
+        }
+
+    }
+
+    //final XOR
+    intermediate_val = intermediate_val^keyXor[NUM_OF_STAGES];
+    printf("final:    %X\n", intermediate_val);
+    fflush(stdout);
+
+    return intermediate_val;
+}
 
 void main(){
 
     findDiffs();
-    initPermutationArray();
+
+    uint16_t output = runEncryption(0x3211);
     //REPLICATION TESTING
     // printf("B -> %d\n", getMostCommonDeltaY(0xB));
     // printf("4 -> %d\n", getMostCommonDeltaY(0x4));
@@ -168,5 +218,8 @@ void main(){
     // printf("%X -> %x\n", deltax, deltay);
     
 
-    uint32_t nMinus1Stages = runThrough();
+    uint16_t nMinus1Stages = runAttack();
+    float Probabilityfloat =  (float)TotalProbabilityNumerator/(float)TotalProbabilityDenominator;
+    printf("chance is: %u/%u or %f\n", TotalProbabilityNumerator, TotalProbabilityDenominator, Probabilityfloat);
+    fflush(stdout);
 }
