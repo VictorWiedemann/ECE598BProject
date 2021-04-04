@@ -1,23 +1,37 @@
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h>  // rand(), srand()
+#include <time.h>    // time()
 
 #define NUM_OF_SBOXES 4
+#define SIZE_OF_SBOX 16
 #define NUM_OF_STAGES 4
+#define BITS_OF_INPUT 16
+#define NUM_OF_CYPHER_PAIRS 5000
 
 //using arrays as a key:value pair to convert 4 bit values. (example 0x4 will convert to 0x2)
-const int sbox[] = {0xE, 0x4, 0xD, 0x1, 0x2, 0xF, 0xB, 0x8, 0x3, 0xA, 0x6, 0xC, 0x5, 0x9, 0x0, 0x7};
+const int sbox[SIZE_OF_SBOX] = {0xE, 0x4, 0xD, 0x1, 0x2, 0xF, 0xB, 0x8, 0x3, 0xA, 0x6, 0xC, 0x5, 0x9, 0x0, 0x7};
+int reverseSbox[SIZE_OF_SBOX];
 
 //not zero based, we will minus one from all of these in code. 
 //I did it this way just so there isn't a human error with off by one issues from copying the values from the PDF
 const int permutation[] = {1-1, 5-1, 9-1, 13-1, 2-1, 6-1, 10-1, 14-1, 3-1, 7-1, 11-1, 15-1, 4-1, 8-1, 12-1, 16-1};
 
 //randomly selected xor values on 16 bit values.
-const uint16_t keyXor[NUM_OF_STAGES + 1] = {0x4354, 0x23F3, 0x5FEA, 0x9812, 0x2328};
+const uint16_t keyXor[NUM_OF_STAGES + 1] = {0x4354, 0x23F3, 0x5FEA, 0x9812, 0xF6F2};
 
-int DiffDistTable[16][16];
+int DiffDistTable[BITS_OF_INPUT][BITS_OF_INPUT];
 
 uint32_t TotalProbabilityNumerator = 1;
 uint32_t TotalProbabilityDenominator = 1;
+
+
+int cyphertextPairs[2][NUM_OF_CYPHER_PAIRS];
+
+bool activeNibbles[BITS_OF_INPUT/4];
+
+
 
 // typedef struct deltaMostLikely{
 //   int value;
@@ -30,8 +44,8 @@ void findDiffs()
     printf("\nDifference Distribution Table:\n");
     
     
-    for(int x1 = 0; x1 < 16; x1++){
-        for(int x2 = 0; x2 < 16; x2++){
+    for(int x1 = 0; x1 < BITS_OF_INPUT; x1++){
+        for(int x2 = 0; x2 < BITS_OF_INPUT; x2++){
             int deltax = x1 ^ x2;
             int deltay = sbox[x1] ^ sbox[x2];  
             //Add a note to the difference dist table that we have hit that point. 
@@ -39,9 +53,9 @@ void findDiffs()
         }
     }
 
-    for(int x1 = 0; x1 < 16; x1++)
+    for(int x1 = 0; x1 < BITS_OF_INPUT; x1++)
     {
-        for(int x2 = 0; x2 < 16; x2++){
+        for(int x2 = 0; x2 < BITS_OF_INPUT; x2++){
             printf("%3d ", DiffDistTable[x1][x2]);
         }
         printf("\n");
@@ -50,9 +64,9 @@ void findDiffs()
     printf("\nDisplaying most probable values (6 or greater only):\n");
     
     printf("num of occurances        Delta X        Delta Y\n");
-    for(int deltaX = 1; deltaX < 16; deltaX++){
-        for(int deltaY = 1; deltaY < 16; deltaY++){
-            if (DiffDistTable[deltaX][deltaY] >= 6 && DiffDistTable[deltaX][deltaY] < 16){           
+    for(int deltaX = 1; deltaX < BITS_OF_INPUT; deltaX++){
+        for(int deltaY = 1; deltaY < BITS_OF_INPUT; deltaY++){
+            if (DiffDistTable[deltaX][deltaY] >= 6 && DiffDistTable[deltaX][deltaY] < BITS_OF_INPUT){           
                 printf("  %2d                     %2d                %2d\n",DiffDistTable[deltaX][deltaY], deltaX, deltaY);  
             }
         }
@@ -60,21 +74,20 @@ void findDiffs()
 }
 
 //Get the most common DeltaX -> DeltaY combo.
-void getMostCommonDeltasTotal(uint8_t * deltaXOut, uint8_t * deltaYOut){
-
-    //TODO: Add tracking for previously selected deltaX/Y combos.
-
+uint8_t getMostCommonDeltasTotal(){
+    uint8_t deltaXOut = 0;
     int MostCommon = 0;
-    //Dont do zero since 0->0 is always 16 times
-    for(uint8_t deltaX = 1; deltaX < 16; deltaX++){
-        for(uint8_t deltaY = 1; deltaY < 16; deltaY++){
+    //Dont do zero since 0->0 is always BITS_OF_INPUT times
+    for(uint8_t deltaX = 1; deltaX < BITS_OF_INPUT; deltaX++){
+        for(uint8_t deltaY = 1; deltaY < BITS_OF_INPUT; deltaY++){
             if(MostCommon < DiffDistTable[deltaX][deltaY]){
                 MostCommon = DiffDistTable[deltaX][deltaY];
-                *deltaXOut = deltaX;
-                *deltaYOut = deltaY;
+                deltaXOut = deltaX;
+                //*deltaYOut = deltaY;
             }
         }
     }
+    return deltaXOut;
 }
 
 //Gives the most common deltaY given a deltaX
@@ -84,7 +97,7 @@ uint8_t getMostCommonDeltaY(uint8_t deltaX){
 
     int MostCommon = 0;
     uint8_t deltaYOut = 0;
-    for(uint8_t deltaY = 1; deltaY < 16; deltaY++){
+    for(uint8_t deltaY = 1; deltaY < BITS_OF_INPUT; deltaY++){
         if(MostCommon < DiffDistTable[deltaX][deltaY]){
             MostCommon = DiffDistTable[deltaX][deltaY];
             deltaYOut = deltaY;
@@ -92,14 +105,12 @@ uint8_t getMostCommonDeltaY(uint8_t deltaX){
     }
 
     TotalProbabilityNumerator *= MostCommon;
-    TotalProbabilityDenominator *= 16; 
+    TotalProbabilityDenominator *= BITS_OF_INPUT; 
 
     return deltaYOut;
 }
 
-
 //Generates the initial input.
-//TODO: FIND OUT WHY we shift by 8 bits instead of another value (4 or 12)
 uint16_t generateInputPlainText(uint8_t inputByte){
     uint16_t plaintext = inputByte << 8; //shift 2 bytes  over
     printf("plaintext is: %04X\n", plaintext);
@@ -124,6 +135,28 @@ uint16_t doSboxForAttack(uint16_t valueToDoSboxOn){
     return sboxOutTotal;   
 }
 
+uint16_t doReverseSbox(uint16_t valueToReverse, int * reverseSbox){
+    uint16_t ReverseSboxOut = 0x0;
+
+    //loop through all non-zero values to see which is the most common DeltaY per input.
+    for(int i = 0; i < NUM_OF_SBOXES; i++){
+        //only deal with the nibbles we care about.
+        if(!activeNibbles[i]){
+            continue;
+        }
+        uint16_t sboxInput = ((valueToReverse>>(4*i)&0xF)); //This grabs 4 bits at a time
+        
+        if(sboxInput > 0xF){
+            printf("ERROR THIS CANNOT HAPPEN. input is: %04X\n");
+            break;
+        }
+
+        uint16_t sboxOutput = reverseSbox[sboxInput];
+        ReverseSboxOut += (sboxOutput<<(4*i));
+    }
+    return ReverseSboxOut; 
+}
+
 uint16_t doSboxForEncryption(uint16_t valueToDoSboxOn){
     uint16_t sboxOutTotal = 0x0;
 
@@ -142,7 +175,7 @@ uint16_t doPermutation(uint16_t valueToPermutate){
 
     uint16_t permutateOut = 0;
     //TODO: make this dynamic later
-    for(int i = 0; i < 16 ; i++){
+    for(int i = 0; i < BITS_OF_INPUT ; i++){
         uint16_t invertedIndex = 15 - i;
         if((valueToPermutate >> invertedIndex) & 1U){
             uint16_t permutatedIndex = permutation[invertedIndex];
@@ -152,15 +185,11 @@ uint16_t doPermutation(uint16_t valueToPermutate){
     return permutateOut;
 }
 
-
 //Doing page 24 of the tutorial
-uint16_t runAttack(){
-    uint8_t deltax, deltay;
-    //same as deltaU1
-    getMostCommonDeltasTotal(&deltax, &deltay); //TODO: check if we need to grab this delta y
-    uint16_t modifiedValue = generateInputPlainText(deltax);
+uint16_t findDeltaU(uint16_t deltaB){
 
-    //Dont run over the last stage yet for some reason. //TODO: figure out why
+   uint16_t modifiedValue = deltaB;
+    //Dont run over the last stage because that is when we will be extracting key bits (section 4.4) 
     for (int i = 0; i < NUM_OF_STAGES-1; i++){
         //do sbox
         modifiedValue = doSboxForAttack(modifiedValue);
@@ -171,45 +200,193 @@ uint16_t runAttack(){
     }
     fflush(stdout);
     //At last stage here.
+    uint16_t deltaU = modifiedValue;
 
-    //TODO: better name, this is bad victor
-    return modifiedValue;
+    return deltaU;
 }
-
-
 
 uint16_t runEncryption(uint16_t message){
     uint16_t intermediate_val = message;
-    printf("start:    %X\n", intermediate_val);
+    //printf("start:    %X\n", intermediate_val);
     for(int i = 0; i <= NUM_OF_STAGES; i++){
         //xor
         intermediate_val = intermediate_val^keyXor[i];
-        printf("xor:      %X\n", intermediate_val);
+       // printf("xor:      %X\n", intermediate_val);
         //sbox
         intermediate_val = doSboxForEncryption(intermediate_val);
-        printf("sbox:     %X\n", intermediate_val);
+       // printf("sbox:     %X\n", intermediate_val);
         //permutation - don't permutate on round 4 
         if(i != (NUM_OF_STAGES-1)){
             intermediate_val = doPermutation(intermediate_val);
-            printf("perm:     %X\n", intermediate_val);
+          //  printf("perm:     %X\n", intermediate_val);
         }
 
     }
 
     //final XOR
     intermediate_val = intermediate_val^keyXor[NUM_OF_STAGES];
-    printf("final:    %X\n", intermediate_val);
+    //printf("final:    %X\n", intermediate_val);
     fflush(stdout);
 
     return intermediate_val;
 }
 
+void generatePairs(uint16_t deltaU4, uint16_t deltaB){
+    //TODO: fill cyphertextPairs[2][5000]
+    int numOfPairs = 0;
+    bool isDeltaU4NibbleZero[BITS_OF_INPUT/4];
+    
+    // Intializes random number generator
+    // We could change the seed, but doing this will give us the same execution per run and easier to debug. 
+    // We could change this to ensure the system works no matter the input.
+    srand((unsigned) time(NULL));
+
+    //Find which nibbles have 0s. We will ensure only active nibbles have a difference in when looking for Crypto Pairs.
+    for(int i = 0; i < (BITS_OF_INPUT/4); i++){
+        uint16_t currNibbleDeltaU = ((deltaU4 >> (4*i)&0xF)); //This grabs 4 bits at a time
+        activeNibbles[i] = (currNibbleDeltaU != 0);
+    }
+
+    while(numOfPairs < NUM_OF_CYPHER_PAIRS){
+
+        //create a pair of inputs that is only different by deltaB.
+        uint16_t firstInput = rand() % 0xFFFF;
+        uint16_t secondInput = firstInput ^ deltaB;       
+        
+        //put both through the encryption.
+        uint16_t firstEncrypt = runEncryption(firstInput);
+        uint16_t secondEncrypt = runEncryption(secondInput);
+        
+        //check the delta of the 2 outputs only has changes on active nibbles.
+        uint16_t deltaC = firstEncrypt ^ secondEncrypt;
+        
+        bool isInvalidPair = false;
+        for(int i = 0; i < (BITS_OF_INPUT/4); i++){
+            uint16_t currNibbleDeltaC = ((deltaC >> (4*i)&0xF)); //This grabs 4 bits at a time
+            
+            // Check for invalid pairs. if there is a difference in a nibble that shouldn't be different, bail out. 
+            if(!activeNibbles[i] && (currNibbleDeltaC != 0)){
+                isInvalidPair = true;
+            }       
+        }
+
+        //invalid pair, do not save this pair, skip and go to another randomly generated one.
+        if(isInvalidPair){
+            //printf("P = first, %04X --- second, %04X\n", firstInput, secondInput);
+            //printf("C = first, %04X --- second, %04X\n", firstEncrypt, secondEncrypt);
+            //printf("deltaC is %04X\n invalid \n", deltaC);
+            continue;
+        }
+
+        //printf("P = first, %04X --- second, %04X\n", firstInput, secondInput);
+        //printf("C = first, %04X --- second, %04X\n", firstEncrypt, secondEncrypt);
+        //printf("deltaC is %04X\n valid \n", deltaC);
+        
+        
+        //if only active nibbles have a difference, save as a pair. 
+        cyphertextPairs[0][numOfPairs] = firstEncrypt;
+        cyphertextPairs[1][numOfPairs] = secondEncrypt;
+        
+        numOfPairs++;
+    }
+}
+
+void generateReverseSboxes(int * reverseSbox){
+    
+    for(int i = 0; i < SIZE_OF_SBOX; i++){
+        reverseSbox[sbox[i]] = i;
+    }
+    printf("reverse sbox is:\n");
+    for(int i = 0; i < SIZE_OF_SBOX; i++){
+        printf("%X, ", reverseSbox[i]);
+    }
+    printf("\n");
+
+}
+
+void generateMostLikelyKeyBits(){
+    int reverseSbox[SIZE_OF_SBOX] = {0};
+
+    //I am just keeping an array of every possible subkey. I do not know which nibbles we are looking for partial subkeys. Bad for memory space, good for all cases.
+    uint16_t rightPairs[32767] = {0};
+
+    generateReverseSboxes(reverseSbox);
+    
+    //This is non-scaleable. For future work, make this dynamic. Possibly recursive, but that can be dangerous. Being ugly for now to deal with this scenario.
+    for(int firstNibble = 0; ((firstNibble < 16) && (activeNibbles[0])); firstNibble++){
+        for(int secondNibble = 0; ((secondNibble < 16) && (activeNibbles[1])); secondNibble++){
+            for(int thirdNibble = 0; ((thirdNibble < 16) && (activeNibbles[2])); thirdNibble++){
+                for(int fourthNibble = 0; ((fourthNibble < 16) && (activeNibbles[3])); fourthNibble++){
+                    for(int i = 0; i < NUM_OF_CYPHER_PAIRS; i++){
+                        
+                        
+
+                        uint16_t xorWithPossibleKey1 = cyphertextPairs[0][i] ^ ;
+                        uint16_t xorWithPossibleKey2 = cyphertextPairs[1][i] ^ ;
+
+                        uint16_t reverseCypher1 = doReverseSbox(cyphertextPairs[0][i], reverseSbox);
+                        uint16_t reverseCypher2 = doReverseSbox(cyphertextPairs[1][i], reverseSbox);
+                        
+                        //TODO VICTOR: we need to not do the below, we need to make sure that the delta equals 0x0606. If yes, then we increment.
+                        uint16_t partialSubkey = reverseCypher1 ^ reverseCypher2;
+                        
+                        printf("C1 %04X, revC1  %04X C2 %04X rev C2  %04X, Partial  %04X\n", cyphertextPairs[0][i], reverseCypher1, cyphertextPairs[1][i], reverseCypher2, partialSubkey);
+
+                        //increment the count that the partial subkey is correct.
+                        rightPairs[partialSubkey]++;
+                    }
+                }
+            }
+        }
+    }
+    uint16_t mostLikelySubkey = 0;
+    uint16_t numOfTimesSubkeyFound = 0;
+    for (int i = 0; i < 32767; i++) 
+    {
+        if (numOfTimesSubkeyFound < rightPairs[i]){
+            numOfTimesSubkeyFound = rightPairs[i];
+            mostLikelySubkey = i;
+        }
+    }
+
+    printf("most Likely Key: %04X with probability %d\n", mostLikelySubkey, numOfTimesSubkeyFound);
+}
+
+
+uint16_t FindK5(uint16_t deltaU4, uint16_t deltaB){
+    //TODO: generate 5000 cyrpto pairs where there are differences in the second and fourth nibble. If the first or third nibble have differences, discard them Get too 5000 pairs
+    generatePairs(deltaU4, deltaB);
+    printf("last Cpair is:%04X, %04X\n", cyphertextPairs[0][4999], cyphertextPairs[1][4999]);
+    //TODO: after getting 5000 pairs, run all 10000 Cs through all values of  K5 backwards (255 permutations) then reverse lookup of the S42 and S44. Delta the pairs and any that match 66 increment a count for that value of k5
+    generateMostLikelyKeyBits();
+
+    //TODO: The Z value with the most hits is your crypto answer.
+    //TODO: confirm that the Z value matches what we have for Z5.
+    return 0;
+}
+
+
+
 void main(){
 
     findDiffs();
 
-    uint16_t output = runEncryption(0x3211);
-    //REPLICATION TESTING
+    //same as deltaU1
+    uint8_t mostCommonNibble = getMostCommonDeltasTotal(); //TODO: check if we need to grab this delta y
+    uint16_t deltaB = generateInputPlainText(mostCommonNibble);
+
+    uint16_t deltaU4 = findDeltaU(deltaB);
+    printf("DeltaU is %04X\n", deltaU4);
+    uint16_t k5Found = FindK5(deltaU4, deltaB);
+    printf("K5 is %X\n", k5Found);
+
+
+    float Probabilityfloat =  (float)TotalProbabilityNumerator/(float)TotalProbabilityDenominator;
+    printf("chance is: %u/%u or %f\n", TotalProbabilityNumerator, TotalProbabilityDenominator, Probabilityfloat);
+    fflush(stdout);
+}
+
+//REPLICATION TESTING
     // printf("B -> %d\n", getMostCommonDeltaY(0xB));
     // printf("4 -> %d\n", getMostCommonDeltaY(0x4));
     // printf("2 -> %d\n", getMostCommonDeltaY(0x2));
@@ -217,9 +394,3 @@ void main(){
     // getMostCommonDeltasTotal(&deltax, &deltay);
     // printf("%X -> %x\n", deltax, deltay);
     
-
-    uint16_t nMinus1Stages = runAttack();
-    float Probabilityfloat =  (float)TotalProbabilityNumerator/(float)TotalProbabilityDenominator;
-    printf("chance is: %u/%u or %f\n", TotalProbabilityNumerator, TotalProbabilityDenominator, Probabilityfloat);
-    fflush(stdout);
-}
