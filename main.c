@@ -10,6 +10,15 @@
 #define BITS_OF_INPUT 16
 #define NUM_OF_CYPHER_PAIRS 5000
 
+
+
+struct nibbleList{
+    uint16_t currentLocation;
+    struct nibblelist * nextNibble;
+};
+
+typedef struct nibbleList nibbleList;
+
 //using arrays as a key:value pair to convert 4 bit values. (example 0x4 will convert to 0x2)
 const int sbox[SIZE_OF_SBOX] = {0xE, 0x4, 0xD, 0x1, 0x2, 0xF, 0xB, 0x8, 0x3, 0xA, 0x6, 0xC, 0x5, 0x9, 0x0, 0x7};
 int reverseSbox[SIZE_OF_SBOX];
@@ -19,7 +28,7 @@ int reverseSbox[SIZE_OF_SBOX];
 const int permutation[] = {1-1, 5-1, 9-1, 13-1, 2-1, 6-1, 10-1, 14-1, 3-1, 7-1, 11-1, 15-1, 4-1, 8-1, 12-1, 16-1};
 
 //randomly selected xor values on 16 bit values.
-const uint16_t keyXor[NUM_OF_STAGES + 1] = {0x4354, 0x23F3, 0x5FEA, 0x9812, 0xF6F2};
+const uint16_t keyXor[NUM_OF_STAGES + 1] = {0x4354, 0x23F3, 0x5FEA, 0x9812, 0x0808};
 
 int DiffDistTable[BITS_OF_INPUT][BITS_OF_INPUT];
 
@@ -30,13 +39,12 @@ uint32_t TotalProbabilityDenominator = 1;
 int cyphertextPairs[2][NUM_OF_CYPHER_PAIRS];
 
 bool activeNibbles[BITS_OF_INPUT/4];
+uint16_t numOfActiveNibbles = 0;
+
+uint16_t rightPairs[32767] = {0};
 
 
 
-// typedef struct deltaMostLikely{
-//   int value;
-//   int Chance;
-// } Point;
 
 // This generates the Diffenece Distribution table. Print the values 6 or greater
 void findDiffs()
@@ -224,7 +232,8 @@ uint16_t runEncryption(uint16_t message){
     }
 
     //final XOR
-    intermediate_val = intermediate_val^keyXor[NUM_OF_STAGES];
+    uint16_t finalxor = keyXor[NUM_OF_STAGES];
+    intermediate_val = intermediate_val^finalxor;
     //printf("final:    %X\n", intermediate_val);
     fflush(stdout);
 
@@ -245,6 +254,9 @@ void generatePairs(uint16_t deltaU4, uint16_t deltaB){
     for(int i = 0; i < (BITS_OF_INPUT/4); i++){
         uint16_t currNibbleDeltaU = ((deltaU4 >> (4*i)&0xF)); //This grabs 4 bits at a time
         activeNibbles[i] = (currNibbleDeltaU != 0);
+        if(activeNibbles[i]){
+            numOfActiveNibbles++;
+        }
     }
 
     while(numOfPairs < NUM_OF_CYPHER_PAIRS){
@@ -291,7 +303,7 @@ void generatePairs(uint16_t deltaU4, uint16_t deltaB){
     }
 }
 
-void generateReverseSboxes(int * reverseSbox){
+void generateReverseSboxes(){
     
     for(int i = 0; i < SIZE_OF_SBOX; i++){
         reverseSbox[sbox[i]] = i;
@@ -304,47 +316,107 @@ void generateReverseSboxes(int * reverseSbox){
 
 }
 
-void generateMostLikelyKeyBits(){
-    int reverseSbox[SIZE_OF_SBOX] = {0};
-
-    //I am just keeping an array of every possible subkey. I do not know which nibbles we are looking for partial subkeys. Bad for memory space, good for all cases.
-    uint16_t rightPairs[32767] = {0};
-
-    generateReverseSboxes(reverseSbox);
+void iterateWithPartialKey(uint16_t partialKey, uint16_t deltaU4){
     
-    //This is non-scaleable. For future work, make this dynamic. Possibly recursive, but that can be dangerous. Being ugly for now to deal with this scenario.
-    for(int firstNibble = 0; ((firstNibble < 16) && (activeNibbles[0])); firstNibble++){
-        for(int secondNibble = 0; ((secondNibble < 16) && (activeNibbles[1])); secondNibble++){
-            for(int thirdNibble = 0; ((thirdNibble < 16) && (activeNibbles[2])); thirdNibble++){
-                for(int fourthNibble = 0; ((fourthNibble < 16) && (activeNibbles[3])); fourthNibble++){
-                    for(int i = 0; i < NUM_OF_CYPHER_PAIRS; i++){
-                        
-                        
 
-                        uint16_t xorWithPossibleKey1 = cyphertextPairs[0][i] ^ ;
-                        uint16_t xorWithPossibleKey2 = cyphertextPairs[1][i] ^ ;
+    for(int i = 0; i < NUM_OF_CYPHER_PAIRS; i++){
+                
+        uint16_t xorWithPossibleKey1 = cyphertextPairs[0][i] ^ partialKey;
+        uint16_t xorWithPossibleKey2 = cyphertextPairs[1][i] ^ partialKey;
 
-                        uint16_t reverseCypher1 = doReverseSbox(cyphertextPairs[0][i], reverseSbox);
-                        uint16_t reverseCypher2 = doReverseSbox(cyphertextPairs[1][i], reverseSbox);
-                        
-                        //TODO VICTOR: we need to not do the below, we need to make sure that the delta equals 0x0606. If yes, then we increment.
-                        uint16_t partialSubkey = reverseCypher1 ^ reverseCypher2;
-                        
-                        printf("C1 %04X, revC1  %04X C2 %04X rev C2  %04X, Partial  %04X\n", cyphertextPairs[0][i], reverseCypher1, cyphertextPairs[1][i], reverseCypher2, partialSubkey);
+        uint16_t reverseCypher1 = doReverseSbox(xorWithPossibleKey1, reverseSbox);
+        uint16_t reverseCypher2 = doReverseSbox(xorWithPossibleKey2, reverseSbox);
+        
+        uint16_t reverseCypherXor = reverseCypher1 ^ reverseCypher2;
 
-                        //increment the count that the partial subkey is correct.
-                        rightPairs[partialSubkey]++;
-                    }
-                }
-            }
+
+        if (reverseCypherXor == deltaU4){ 
+            rightPairs[partialKey]++;
+            //printf("C1 %04X, revC1  %04X C2 %04X rev C2  %04X, Partial  %04X\n", cyphertextPairs[0][i], reverseCypher1, cyphertextPairs[1][i], reverseCypher2, possibleKey.total);
+        }
+            
+    }
+}
+
+//recursion over all permutations of Z5. Only iterate over all active nibbles.
+void loopOverNibbles(nibbleList *nibbleList, uint16_t lastPartialKey, uint16_t deltaU4){
+    
+    //hit end of recursion system.
+    if(nibbleList == NULL){
+        iterateWithPartialKey(lastPartialKey, deltaU4);
+        return;
+    }
+
+    // while(nibbleListCurrent != NULL){
+    //     printf("current index is %X and nibble List next is %s\n", nibbleListCurrent->currentLocation, nibbleListCurrent->nextNibble);
+    //     nibbleListCurrent = nibbleListCurrent->nextNibble;
+    // }
+
+    for(int i = 0; i < 16; i++){
+        uint16_t currentPartialKey = lastPartialKey;
+        //bitshift the values by currentPartialKey += i << 4*nibbleList
+        currentPartialKey += ( i <<(4*nibbleList->currentLocation));
+
+        
+        loopOverNibbles(nibbleList->nextNibble, currentPartialKey, deltaU4);
+    }
+   
+    //for overallnibbles starting at for all nibbles starting at lastNibble{
+    //}else{
+        //return;
+    //}
+    //for first active nibble, start loop (0-> 16)*4^lastNibble
+    //at start of this loop, check if there is another active nibble
+    //if yes, call this function (lastNibble++)
+
+ 
+}
+
+
+void generateMostLikelyKeyBits(uint16_t deltaU4){
+    
+    //I am just keeping an array of every possible subkey. I do not know which nibbles we are looking for partial subkeys. Bad for memory space, good for all cases.
+    generateReverseSboxes();
+
+    nibbleList *nibbleListHead = (nibbleList*)malloc(sizeof(nibbleList));
+
+    nibbleListHead->currentLocation = 0xFF;
+    nibbleListHead->nextNibble = NULL;
+
+    nibbleList *NibbleListCurrent = nibbleListHead;
+
+    //generate the link lists of nibbles
+    for(int i = 0; i < 4; i++){
+        if(!activeNibbles[i]){
+            continue;
+        }
+
+        if(NibbleListCurrent->currentLocation == 0xFF){
+            NibbleListCurrent->currentLocation = i;
+        }else{
+            nibbleList *nibbleListNext = (nibbleList*)malloc(sizeof(nibbleList));
+            nibbleListNext->currentLocation = i;
+            nibbleListNext->nextNibble = NULL;
+            NibbleListCurrent->nextNibble = nibbleListNext;
+            NibbleListCurrent = NibbleListCurrent->nextNibble;
         }
     }
+
+
+    loopOverNibbles(nibbleListHead, 0, deltaU4);
+
     uint16_t mostLikelySubkey = 0;
     uint16_t numOfTimesSubkeyFound = 0;
+    
     for (int i = 0; i < 32767; i++) 
     {
+        if(rightPairs[i] > 0){
+            printf("right pair %X happened %u times\n", i, rightPairs[i]);
+        }
+        
         if (numOfTimesSubkeyFound < rightPairs[i]){
             numOfTimesSubkeyFound = rightPairs[i];
+            
             mostLikelySubkey = i;
         }
     }
@@ -354,14 +426,10 @@ void generateMostLikelyKeyBits(){
 
 
 uint16_t FindK5(uint16_t deltaU4, uint16_t deltaB){
-    //TODO: generate 5000 cyrpto pairs where there are differences in the second and fourth nibble. If the first or third nibble have differences, discard them Get too 5000 pairs
+    
     generatePairs(deltaU4, deltaB);
-    printf("last Cpair is:%04X, %04X\n", cyphertextPairs[0][4999], cyphertextPairs[1][4999]);
-    //TODO: after getting 5000 pairs, run all 10000 Cs through all values of  K5 backwards (255 permutations) then reverse lookup of the S42 and S44. Delta the pairs and any that match 66 increment a count for that value of k5
-    generateMostLikelyKeyBits();
+    generateMostLikelyKeyBits(deltaU4);
 
-    //TODO: The Z value with the most hits is your crypto answer.
-    //TODO: confirm that the Z value matches what we have for Z5.
     return 0;
 }
 
@@ -377,14 +445,19 @@ void main(){
 
     uint16_t deltaU4 = findDeltaU(deltaB);
     printf("DeltaU is %04X\n", deltaU4);
-    uint16_t k5Found = FindK5(deltaU4, deltaB);
-    printf("K5 is %X\n", k5Found);
+    FindK5(deltaU4, deltaB);
+
 
 
     float Probabilityfloat =  (float)TotalProbabilityNumerator/(float)TotalProbabilityDenominator;
-    printf("chance is: %u/%u or %f\n", TotalProbabilityNumerator, TotalProbabilityDenominator, Probabilityfloat);
+    printf("theoretical chance is: %u/%u or %f\n", TotalProbabilityNumerator, TotalProbabilityDenominator, Probabilityfloat);
     fflush(stdout);
 }
+
+
+
+
+
 
 //REPLICATION TESTING
     // printf("B -> %d\n", getMostCommonDeltaY(0xB));
