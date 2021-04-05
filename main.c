@@ -28,7 +28,7 @@ int reverseSbox[SIZE_OF_SBOX];
 const int permutation[] = {1-1, 5-1, 9-1, 13-1, 2-1, 6-1, 10-1, 14-1, 3-1, 7-1, 11-1, 15-1, 4-1, 8-1, 12-1, 16-1};
 
 //randomly selected xor values on 16 bit values.
-const uint16_t keyXor[NUM_OF_STAGES + 1] = {0x4354, 0x23F3, 0x5FEA, 0x9812, 0x0808};
+const uint16_t keyXor[NUM_OF_STAGES + 1] = {0x4354, 0x23F3, 0x5FEA, 0x9812, 0x8CC8};
 
 int DiffDistTable[BITS_OF_INPUT][BITS_OF_INPUT];
 
@@ -61,10 +61,16 @@ void findDiffs()
         }
     }
 
+    for(int i = 0; i < BITS_OF_INPUT; i++){
+            printf("%3d ,", i);
+    }
+    printf("\n");
+
     for(int x1 = 0; x1 < BITS_OF_INPUT; x1++)
     {
+        printf("%3d ,", x1);
         for(int x2 = 0; x2 < BITS_OF_INPUT; x2++){
-            printf("%3d ", DiffDistTable[x1][x2]);
+            printf("%3d ,", DiffDistTable[x1][x2]);
         }
         printf("\n");
     }
@@ -299,6 +305,8 @@ void generatePairs(uint16_t deltaU4, uint16_t deltaB){
         cyphertextPairs[0][numOfPairs] = firstEncrypt;
         cyphertextPairs[1][numOfPairs] = secondEncrypt;
         
+        
+
         numOfPairs++;
     }
 }
@@ -410,9 +418,9 @@ void generateMostLikelyKeyBits(uint16_t deltaU4){
     
     for (int i = 0; i < 32767; i++) 
     {
-        if(rightPairs[i] > 0){
-            printf("right pair %X happened %u times\n", i, rightPairs[i]);
-        }
+        //if(rightPairs[i] > 0){
+            //printf("right pair %X happened %u times\n", i, rightPairs[i]);
+        //}
         
         if (numOfTimesSubkeyFound < rightPairs[i]){
             numOfTimesSubkeyFound = rightPairs[i];
@@ -454,16 +462,3 @@ void main(){
     fflush(stdout);
 }
 
-
-
-
-
-
-//REPLICATION TESTING
-    // printf("B -> %d\n", getMostCommonDeltaY(0xB));
-    // printf("4 -> %d\n", getMostCommonDeltaY(0x4));
-    // printf("2 -> %d\n", getMostCommonDeltaY(0x2));
-    // int deltax, deltay;
-    // getMostCommonDeltasTotal(&deltax, &deltay);
-    // printf("%X -> %x\n", deltax, deltay);
-    
