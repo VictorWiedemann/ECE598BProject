@@ -21,14 +21,14 @@ typedef struct nibbleList nibbleList;
 
 //using arrays as a key:value pair to convert 4 bit values. (example 0x4 will convert to 0x2)
 const int sbox[SIZE_OF_SBOX] = {0xE, 0x4, 0xD, 0x1, 0x2, 0xF, 0xB, 0x8, 0x3, 0xA, 0x6, 0xC, 0x5, 0x9, 0x0, 0x7};
-int reverseSbox[SIZE_OF_SBOX];
+int reverseSbox[SIZE_OF_SBOX];// = {0x, 0x, 0x, 0x, 0x, 0x, 0x, 0x, 0x, 0x, 0x, 0x, 0x, 0x, 0xE, 0x};
 
 //not zero based, we will minus one from all of these in code. 
 //I did it this way just so there isn't a human error with off by one issues from copying the values from the PDF
 const int permutation[] = {1-1, 5-1, 9-1, 13-1, 2-1, 6-1, 10-1, 14-1, 3-1, 7-1, 11-1, 15-1, 4-1, 8-1, 12-1, 16-1};
 
 //randomly selected xor values on 16 bit values.
-const uint16_t keyXor[NUM_OF_STAGES + 1] = {0x4354, 0x23F3, 0x5FEA, 0x9812, 0x8CC8};
+const uint16_t keyXor[NUM_OF_STAGES + 1] = {0x3354, 0x23F3, 0x5FEA, 0x9812, 0x8CC9};
 
 int DiffDistTable[BITS_OF_INPUT][BITS_OF_INPUT];
 
@@ -149,7 +149,7 @@ uint16_t doSboxForAttack(uint16_t valueToDoSboxOn){
     return sboxOutTotal;   
 }
 
-uint16_t doReverseSbox(uint16_t valueToReverse, int * reverseSbox){
+uint16_t doReverseSbox(uint16_t valueToReverse){
     uint16_t ReverseSboxOut = 0x0;
 
     //loop through all non-zero values to see which is the most common DeltaY per input.
@@ -221,18 +221,18 @@ uint16_t findDeltaU(uint16_t deltaB){
 
 uint16_t runEncryption(uint16_t message){
     uint16_t intermediate_val = message;
-    //printf("start:    %X\n", intermediate_val);
-    for(int i = 0; i <= NUM_OF_STAGES; i++){
+    printf("start:    %X\n", intermediate_val);
+    for(int i = 0; i < NUM_OF_STAGES; i++){
         //xor
         intermediate_val = intermediate_val^keyXor[i];
-       // printf("xor:      %X\n", intermediate_val);
+        //printf("xor stage %d:      %X with %X\n", i,  intermediate_val, keyXor[i]);
         //sbox
         intermediate_val = doSboxForEncryption(intermediate_val);
-       // printf("sbox:     %X\n", intermediate_val);
+        //printf("sbox stage %d:     %X\n",  i,intermediate_val);
         //permutation - don't permutate on round 4 
         if(i != (NUM_OF_STAGES-1)){
             intermediate_val = doPermutation(intermediate_val);
-          //  printf("perm:     %X\n", intermediate_val);
+            //printf("perm stage %d:     %X\n", i, intermediate_val);
         }
 
     }
@@ -240,7 +240,7 @@ uint16_t runEncryption(uint16_t message){
     //final XOR
     uint16_t finalxor = keyXor[NUM_OF_STAGES];
     intermediate_val = intermediate_val^finalxor;
-    //printf("final:    %X\n", intermediate_val);
+    //printf("final out:    %X, with %X\n", intermediate_val, finalxor);
     fflush(stdout);
 
     return intermediate_val;
@@ -265,7 +265,7 @@ void generatePairs(uint16_t deltaU4, uint16_t deltaB){
         }
     }
 
-    while(numOfPairs < NUM_OF_CYPHER_PAIRS){
+    for(int i = 0; i < NUM_OF_CYPHER_PAIRS; i++){
 
         //create a pair of inputs that is only different by deltaB.
         uint16_t firstInput = rand() % 0xFFFF;
@@ -290,25 +290,26 @@ void generatePairs(uint16_t deltaU4, uint16_t deltaB){
 
         //invalid pair, do not save this pair, skip and go to another randomly generated one.
         if(isInvalidPair){
-            //printf("P = first, %04X --- second, %04X\n", firstInput, secondInput);
-            //printf("C = first, %04X --- second, %04X\n", firstEncrypt, secondEncrypt);
-            //printf("deltaC is %04X\n invalid \n", deltaC);
+            // printf("P = first, %04X --- second, %04X\n", firstInput, secondInput);
+            // printf("C = first, %04X --- second, %04X\n", firstEncrypt, secondEncrypt);
+            // printf("deltaC is %04X\n invalid \n", deltaC);
             continue;
         }
 
-        //printf("P = first, %04X --- second, %04X\n", firstInput, secondInput);
-        //printf("C = first, %04X --- second, %04X\n", firstEncrypt, secondEncrypt);
-        //printf("deltaC is %04X\n valid \n", deltaC);
+        
         
         
         //if only active nibbles have a difference, save as a pair. 
         cyphertextPairs[0][numOfPairs] = firstEncrypt;
         cyphertextPairs[1][numOfPairs] = secondEncrypt;
         
-        
-
         numOfPairs++;
     }
+
+    for(int i = 0; i < numOfPairs; i++){
+        //printf("first cyphertext %04X\nsecond cyphertext %04X\n\n", cyphertextPairs[0][i], cyphertextPairs[1][i]);
+    }
+
 }
 
 void generateReverseSboxes(){
@@ -322,27 +323,34 @@ void generateReverseSboxes(){
     }
     printf("\n");
 
+    for(int i = 0; i < SIZE_OF_SBOX; i++){
+        //print the sboxe table
+        printf("%X -> %X\n", i, sbox[i]);
+    }
+    printf("\n\n");
+    for(int i = 0; i < SIZE_OF_SBOX; i++){
+        //print the reverse sbox table
+        printf("%X -> %X\n", i, reverseSbox[i]);
+    }
+
 }
 
 void iterateWithPartialKey(uint16_t partialKey, uint16_t deltaU4){
-    
-
     for(int i = 0; i < NUM_OF_CYPHER_PAIRS; i++){
                 
         uint16_t xorWithPossibleKey1 = cyphertextPairs[0][i] ^ partialKey;
         uint16_t xorWithPossibleKey2 = cyphertextPairs[1][i] ^ partialKey;
 
-        uint16_t reverseCypher1 = doReverseSbox(xorWithPossibleKey1, reverseSbox);
-        uint16_t reverseCypher2 = doReverseSbox(xorWithPossibleKey2, reverseSbox);
+        uint16_t reverseCypher1 = doReverseSbox(xorWithPossibleKey1);
+        uint16_t reverseCypher2 = doReverseSbox(xorWithPossibleKey2);
         
         uint16_t reverseCypherXor = reverseCypher1 ^ reverseCypher2;
 
 
         if (reverseCypherXor == deltaU4){ 
             rightPairs[partialKey]++;
-            //printf("C1 %04X, revC1  %04X C2 %04X rev C2  %04X, Partial  %04X\n", cyphertextPairs[0][i], reverseCypher1, cyphertextPairs[1][i], reverseCypher2, possibleKey.total);
+            printf("C1 %04X, revC1  %04X C2 %04X rev C2  %04X, Partial  %04X\n", cyphertextPairs[0][i], reverseCypher1, cyphertextPairs[1][i], reverseCypher2, reverseCypherXor);
         }
-            
     }
 }
 
@@ -360,7 +368,7 @@ void loopOverNibbles(nibbleList *nibbleList, uint16_t lastPartialKey, uint16_t d
     //     nibbleListCurrent = nibbleListCurrent->nextNibble;
     // }
 
-    for(int i = 0; i < 16; i++){
+    for(int i = 0; i < BITS_OF_INPUT; i++){
         uint16_t currentPartialKey = lastPartialKey;
         //bitshift the values by currentPartialKey += i << 4*nibbleList
         currentPartialKey += ( i <<(4*nibbleList->currentLocation));
@@ -368,16 +376,6 @@ void loopOverNibbles(nibbleList *nibbleList, uint16_t lastPartialKey, uint16_t d
         
         loopOverNibbles(nibbleList->nextNibble, currentPartialKey, deltaU4);
     }
-   
-    //for overallnibbles starting at for all nibbles starting at lastNibble{
-    //}else{
-        //return;
-    //}
-    //for first active nibble, start loop (0-> 16)*4^lastNibble
-    //at start of this loop, check if there is another active nibble
-    //if yes, call this function (lastNibble++)
-
- 
 }
 
 
@@ -429,6 +427,7 @@ void generateMostLikelyKeyBits(uint16_t deltaU4){
         }
     }
 
+    
     printf("most Likely Key: %04X with probability %d\n", mostLikelySubkey, numOfTimesSubkeyFound);
 }
 
@@ -461,4 +460,5 @@ void main(){
     printf("theoretical chance is: %u/%u or %f\n", TotalProbabilityNumerator, TotalProbabilityDenominator, Probabilityfloat);
     fflush(stdout);
 }
+
 
